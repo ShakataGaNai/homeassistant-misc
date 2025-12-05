@@ -1,0 +1,161 @@
+blueprint:
+  name: NFC Tag Maintenance Reminder
+  description: Track maintenance tasks with NFC tags and get reminders after a set number of days
+  domain: automation
+  input:
+    tag_id:
+      name: NFC Tag ID
+      description: The ID of the NFC tag to scan
+      selector:
+        text:
+    replaced_datetime:
+      name: Replaced Date Helper
+      description: input_datetime entity to store when the task was last done
+      selector:
+        entity:
+          domain: input_datetime
+    snoozed_datetime:
+      name: Snoozed Date Helper
+      description: input_datetime entity to store when the reminder was snoozed
+      selector:
+        entity:
+          domain: input_datetime
+    reminder_days:
+      name: Days Until Reminder
+      description: Number of days before sending a reminder
+      default: 90
+      selector:
+        number:
+          min: 1
+          max: 1000
+          unit_of_measurement: days
+    snooze_days:
+      name: Snooze Duration
+      description: Number of days to snooze the reminder
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          unit_of_measurement: days
+    reminder_time:
+      name: Reminder Time
+      description: Time of day to check and send reminders
+      default: "10:00:00"
+      selector:
+        time:
+    task_name:
+      name: Task Name
+      description: Name of the maintenance task (e.g., "HVAC Filter", "Water Filter")
+      selector:
+        text:
+    telegram_device_id:
+      name: Telegram Device ID (Optional)
+      description: Device ID for Telegram notifications. Leave empty to skip Telegram.
+      default: ""
+      selector:
+        text:
+    mobile_notify_service:
+      name: Mobile Notify Service
+      description: Notify service for mobile push (e.g., notify.my_mobile_device)
+      selector:
+        text:
+
+variables:
+  task_name: !input task_name
+  replaced_datetime: !input replaced_datetime
+  snoozed_datetime: !input snoozed_datetime
+  reminder_days: !input reminder_days
+  snooze_days: !input snooze_days
+  telegram_device_id: !input telegram_device_id
+  snooze_action: "SNOOZE_{{ task_name | upper | replace(' ', '_') }}"
+
+trigger:
+  - platform: tag
+    tag_id: !input tag_id
+    id: tag_scanned
+  - platform: time
+    at: !input reminder_time
+    id: daily_check
+  - platform: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: "{{ snooze_action }}"
+    id: snooze_pressed
+
+action:
+  - choose:
+      # Tag was scanned - log the replacement
+      - conditions:
+          - condition: trigger
+            id: tag_scanned
+        sequence:
+          - service: input_datetime.set_datetime
+            target:
+              entity_id: !input replaced_datetime
+            data:
+              date: "{{ now().strftime('%Y-%m-%d') }}"
+          - action: !input mobile_notify_service
+            data:
+              message: "{{ task_name }} replacement logged. Next reminder in {{ reminder_days }} days."
+          - if:
+              - condition: template
+                value_template: "{{ telegram_device_id != '' }}"
+            then:
+              - action: notify.send_message
+                target:
+                  device_id: "{{ telegram_device_id }}"
+                data:
+                  message: "{{ task_name }} replacement logged. Next reminder in {{ reminder_days }} days."
+
+      # Daily check - send reminder if due
+      - conditions:
+          - condition: trigger
+            id: daily_check
+          - condition: template
+            value_template: >
+              {{ (now().date() - (states(replaced_datetime) | as_datetime).date()).days >= reminder_days }}
+          - condition: template
+            value_template: >
+              {{ (now().date() - (states(snoozed_datetime) | as_datetime | default(as_datetime('2000-01-01'))).date()).days >= snooze_days }}
+        sequence:
+          - action: !input mobile_notify_service
+            data:
+              message: "Time to replace the {{ task_name }}!"
+              data:
+                actions:
+                  - action: "{{ snooze_action }}"
+                    title: "Snooze {{ snooze_days }} days"
+          - if:
+              - condition: template
+                value_template: "{{ telegram_device_id != '' }}"
+            then:
+              - action: notify.send_message
+                target:
+                  device_id: "{{ telegram_device_id }}"
+                data:
+                  message: >
+                    Time to replace the {{ task_name }}! Last replaced {{ states(replaced_datetime) }}, {{ (now().date() - (states(replaced_datetime) | as_datetime).date()).days }} days ago.
+
+      # Snooze button pressed
+      - conditions:
+          - condition: trigger
+            id: snooze_pressed
+        sequence:
+          - service: input_datetime.set_datetime
+            target:
+              entity_id: !input snoozed_datetime
+            data:
+              date: "{{ now().strftime('%Y-%m-%d') }}"
+          - action: !input mobile_notify_service
+            data:
+              message: "{{ task_name }} reminder snoozed for {{ snooze_days }} days."
+          - if:
+              - condition: template
+                value_template: "{{ telegram_device_id != '' }}"
+            then:
+              - action: notify.send_message
+                target:
+                  device_id: "{{ telegram_device_id }}"
+                data:
+                  message: "{{ task_name }} reminder snoozed for {{ snooze_days }} days."

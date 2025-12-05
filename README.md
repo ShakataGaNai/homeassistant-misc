@@ -1,2 +1,2 @@
 # homeassistant-misc
-Misc public things related to Home Assistant.
+This repo is for random things related to Home Assitant that I've found, collected, built, created, whatever. Please make sure you look at the code before using them. I'm not malicious but why would you trust my word? Use any script here at your own risk.
