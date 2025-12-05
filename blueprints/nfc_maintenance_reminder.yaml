@@ -1,6 +1,11 @@
 blueprint:
   name: NFC Tag Maintenance Reminder
-  description: Track maintenance tasks with NFC tags and get reminders after a set number of days
+  description: >
+    Track recurring maintenance tasks using NFC tags. Scan a tag when you complete a task, 
+    and get reminded after a configurable number of days with snooze support. 
+    Examples: HVAC filter replacement, water filter changes, pool filter cleaning, 
+    water heater draining, smoke detector battery replacement, car oil changes, 
+    gutter cleaning, dryer vent cleaning, etc.
   domain: automation
   input:
     tag_id:
@@ -8,9 +13,9 @@ blueprint:
       description: The ID of the NFC tag to scan
       selector:
         text:
-    replaced_datetime:
-      name: Replaced Date Helper
-      description: input_datetime entity to store when the task was last done
+    completed_datetime:
+      name: Completed Date Helper
+      description: input_datetime entity to store when the task was last completed
       selector:
         entity:
           domain: input_datetime
@@ -46,7 +51,7 @@ blueprint:
         time:
     task_name:
       name: Task Name
-      description: Name of the maintenance task (e.g., "HVAC Filter", "Water Filter")
+      description: Name of the maintenance task (e.g., "HVAC Filter", "Pool Filter", "Water Heater Drain")
       selector:
         text:
     telegram_device_id:
@@ -63,7 +68,7 @@ blueprint:
 
 variables:
   task_name: !input task_name
-  replaced_datetime: !input replaced_datetime
+  completed_datetime: !input completed_datetime
   snoozed_datetime: !input snoozed_datetime
   reminder_days: !input reminder_days
   snooze_days: !input snooze_days
@@ -85,19 +90,19 @@ trigger:
 
 action:
   - choose:
-      # Tag was scanned - log the replacement
+      # Tag was scanned - log task completion
       - conditions:
           - condition: trigger
             id: tag_scanned
         sequence:
           - service: input_datetime.set_datetime
             target:
-              entity_id: !input replaced_datetime
+              entity_id: !input completed_datetime
             data:
               date: "{{ now().strftime('%Y-%m-%d') }}"
           - action: !input mobile_notify_service
             data:
-              message: "{{ task_name }} replacement logged. Next reminder in {{ reminder_days }} days."
+              message: "{{ task_name }} completed. Next reminder in {{ reminder_days }} days."
           - if:
               - condition: template
                 value_template: "{{ telegram_device_id != '' }}"
@@ -106,7 +111,7 @@ action:
                 target:
                   device_id: "{{ telegram_device_id }}"
                 data:
-                  message: "{{ task_name }} replacement logged. Next reminder in {{ reminder_days }} days."
+                  message: "{{ task_name }} completed. Next reminder in {{ reminder_days }} days."
 
       # Daily check - send reminder if due
       - conditions:
@@ -114,14 +119,14 @@ action:
             id: daily_check
           - condition: template
             value_template: >
-              {{ (now().date() - (states(replaced_datetime) | as_datetime).date()).days >= reminder_days }}
+              {{ (now().date() - (states(completed_datetime) | as_datetime).date()).days >= reminder_days }}
           - condition: template
             value_template: >
               {{ (now().date() - (states(snoozed_datetime) | as_datetime | default(as_datetime('2000-01-01'))).date()).days >= snooze_days }}
         sequence:
           - action: !input mobile_notify_service
             data:
-              message: "Time to replace the {{ task_name }}!"
+              message: "Time to do: {{ task_name }}"
               data:
                 actions:
                   - action: "{{ snooze_action }}"
@@ -135,7 +140,7 @@ action:
                   device_id: "{{ telegram_device_id }}"
                 data:
                   message: >
-                    Time to replace the {{ task_name }}! Last replaced {{ states(replaced_datetime) }}, {{ (now().date() - (states(replaced_datetime) | as_datetime).date()).days }} days ago.
+                    Time to do: {{ task_name }}! Last completed {{ states(completed_datetime) }}, {{ (now().date() - (states(completed_datetime) | as_datetime).date()).days }} days ago.
 
       # Snooze button pressed
       - conditions:
